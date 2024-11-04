@@ -1,0 +1,779 @@
+//import Cosmetics/PetBoo
+//import Cosmetics/PetSnowBunny
+//import Cosmetics/PetSpider
+//import Cosmetics/PetDog
+//import Cosmetics/PetCrab
+//import Cosmetics/PetSkully
+//import Fishing
+//import Cosmetics/Hats/Helmet
+//import Cosmetics/Hats/WitchHat
+//import Cosmetics/WitchBroom
+//import UI/BragMeter
+//import UI/LiveSplit
+//import UI/MindstoneButton
+
+//lag variables
+var FoeString = foe
+var MyBuffs = buffs.string
+var MyDebuffs = debuffs.string
+var FoeBuffs = foe.buffs.string
+var FoeDebuffs = foe.debuffs.string
+var FoeCount = foe.count
+var FoeDistance = foe.distance
+var IsWalking = ai.walking
+var FoeHP = foe.hp
+var FoeArmor = foe.armor
+var FoeDTK = (FoeHP + FoeArmor)
+
+//behavior flags
+var UsePotions = true
+var UsePermapot = true
+var DebugPrintouts = true
+var StatisticsPrintouts = true
+var DoDodging = true
+var AutomateCombat = true
+
+//magic numbers
+var MeleeDistance = 11
+var RangedDistance = 16
+var EngageDistance = 999
+var PickupAttractDistance = 6
+var AttackArmorThreshold = 100
+
+var BardicheSpecDamage = 932
+var HammerSpecDamage = 304
+var BardicheCooldownTime = 900
+var HammerCooldownTime = 660
+var BardicheSpecTime = 24
+var HammerSpecTime = 20
+var CompoundShieldMaxArmor = 29
+
+//logic solving and timers
+var FoundFoeWeaknessHint = ＂none＂
+var ElementToEquip = ＂none＂
+var PotionChoice = ＂none＂
+var DebuffToApply = ＂none＂
+var SpecToUse = ＂none＂
+var CutsceneLocked = false
+var CLLF = false
+var CutsceneExitTimer = 0
+var CutsceneExitStartTime = 4
+var IsReapplying = true
+var TriedDashing = false
+
+//Moondialing
+var UseMD21Swords = true
+var MD21SwordsTimer = 0
+var MD21Sword1 = ＂＂
+var MD21Sword2 = ＂＂
+
+//stats
+var LoopsPerformed = 0
+
+func RenderDebugPrintouts()
+ //>`0,6,#white,Moondial1: @MD21Sword1@
+ //>`0,7,#white,Moondial2: @MD21Sword2@
+ //>`0,8,#white,MD clock: @MD21SwordsTimer@
+ >`0,20,#white,My buffs: @MyBuffs@
+ >`0,21,#white,My debuffs: @MyDebuffs@
+ >`0,22,#white,Foe buffs: @FoeBuffs@ 
+ >`0,23,#white,Foe debuffs: @FoeDebuffs@
+ >`0,24,#white,@foe@
+ >`0,25,#white,Foe data: Count @FoeCount@, 
+ ^Dist @FoeDistance@, DTK @FoeDTK@
+
+func RenderStatisticsPrintouts()
+ >`80,0,#white,Loops: @LoopsPerformed@
+
+func RefetchLagVariables()
+ FoeString = foe
+ MyBuffs = buffs.string
+ MyDebuffs = debuffs.string
+ FoeBuffs = foe.buffs.string
+ FoeDebuffs = foe.debuffs.string
+ IsWalking = ai.walking
+ FoeCount = foe.count
+ FoeDistance = foe.distance
+ FoeHP = foe.hp
+ FoeArmor = foe.armor
+ FoeDTK = (FoeHP + FoeArmor)
+
+func Main()
+ RunAAC(item.left,item.right)
+ InitializeLoops()
+ DetermineCutsceneLock()
+ SpecToUse = ConsiderSpecialAttacks()
+ DebuffToApply = 
+ ^ConsiderDebuffs()
+ InitializePotions()
+ ?ConsiderUsingPotion(PotionChoice)
+  ConsumePotion()
+ ?CutsceneLocked
+  ?DPPermapot
+   EquipPermapot()
+  :
+   OutOfCombat()
+ :?ConsiderDodging() & DoDodging
+  EquipDodging()
+ :?ConsiderDashing()
+  EquipDashing()
+ :?ConsiderSummoning()
+  DoSummoning()
+ :?SpecToUse ! ＂none＂
+  ActivateAbility(SpecToUse)
+ :?DebuffToApply ! ＂none＂
+  ApplyDebuffs(DebuffToApply)
+ :?ConsiderPermapot()
+  EquipPermapot()
+ :
+  ?FoeCount = 1 & FoeDistance <= MeleeDistance
+   EquipSTMeleeDPS()
+  :?FoeCount = 1 & FoeDistance >= RangedDistance
+   ?IsWalking
+    OutOfCombat()
+   :?(CutsceneExitTimer > 0)
+    RestartWalkingAfterStopped()
+   :
+    EquipSTRangedDPS()
+  :?FoeCount = 1
+   ?IsWalking
+    EquipDashing()
+   :?(CutsceneExitTimer > 0)
+    RestartWalkingAfterStopped()
+   :
+    EquipSTRangedDPS()
+  :?FoeCount > 1 & FoeDistance <= MeleeDistance
+   EquipMTMeleeDPS()
+  :?FoeCount > 1 & FoeDistance >= RangedDistance
+   ?IsWalking
+    OutOfCombat()
+   :?(CutsceneExitTimer > 0)
+    RestartWalkingAfterStopped()
+   :
+    EquipMTRangedDPS()
+  :?FoeCount > 1
+   ?IsWalking
+    EquipDashing()
+   :?(CutsceneExitTimer > 0)
+    RestartWalkingAfterStopped()
+   :
+    EquipMTRangedDPS()
+  :
+   OutOfCombat()
+ 
+func OutOfCombat()
+ ?ConsiderQuarterstaff()
+  ActivateAbility(＂quarterstaff＂)
+ :
+  ?IsWalking
+   equipL triskelion stone
+  :
+   equipL quest stone
+  ?pickup.distance < PickupAttractDistance
+   equipR star stone
+  :
+   var ShieldElem = 
+   ^DetermineOffenseElement(
+   ^FindFoeWeaknessHint())
+   EquipEngageShield(ShieldElem)
+
+func EquipEngageShield(Element)
+ ?Element ! ＂stone＂ & ai.enabled &
+ ^item.CanActivate() = true
+  EquipR A @Element@ shield prismatic
+ :
+  ?armor >= 14 //base compshield armor
+   EquipR compound shield shiny
+  :
+   EquipR compound shield -shiny
+
+func EquipSTRangedDPS()
+ FoundFoeWeaknessHint = FindFoeWeaknessHint()
+ ElementToEquip = 
+ ^DetermineOffenseElement(FoundFoeWeaknessHint)
+ ?ElementToEquip = ＂ice＂
+  Equip coldsnap arbalest
+ :?ElementToEquip = ＂poison＂
+  Equip D poison crossbow
+ :?ElementToEquip = ＂vigor＂
+  Equip D vigor crossbow 
+ :?ElementToEquip = ＂aether＂
+  Equip D aether crossbow 
+ :?ElementToEquip = ＂fire＂
+  Equip D fire crossbow 
+ :
+  ?FoeString ! ＂immune_to_ranged＂
+   Equip D aether crossbow
+  :
+   Equip skeleton arm
+
+func EquipMTRangedDPS()
+ FoundFoeWeaknessHint = FindFoeWeaknessHint()
+ ElementToEquip = 
+ ^DetermineOffenseElement(FoundFoeWeaknessHint)
+ ?ElementToEquip = ＂ice＂
+  EquipR D ice wand shiny
+  EquipL D ice wand -shiny
+ :?ElementToEquip = ＂poison＂
+  EquipR D poison wand shiny
+  EquipL D poison wand -shiny
+ :?ElementToEquip = ＂vigor＂
+  EquipR D vigor wand shiny
+  EquipL D vigor wand -shiny
+ :?ElementToEquip = ＂aether＂
+  EquipR D aether wand shiny
+  EquipL D aether wand -shiny
+ :?ElementToEquip = ＂fire＂
+  EquipR D fire wand shiny
+  EquipL D fire wand -shiny
+ :
+  ?FoeString ! ＂immune_to_ranged＂
+   EquipR dU aether wand +14
+   EquipL dI ice wand +15
+  :
+   Equip skeleton arm
+
+func EquipSTMeleeDPS()
+  FoundFoeWeaknessHint = FindFoeWeaknessHint()
+  ElementToEquip = 
+  ^DetermineOffenseElement(FoundFoeWeaknessHint)
+  ?FoeString ! ＂immune_to_physical＂
+   ?foe.armor >= AttackArmorThreshold
+    ?ElementToEquip = ＂omni＂
+     EquipR dL vigor hammer +16
+     EquipL dL vigor hammer +14
+    :?ElementToEquip = ＂ice＂
+     EquipR D ice hammer +15
+     EquipL D ice hammer +14
+    :?ElementToEquip = ＂poison＂
+     EquipR D poison hammer shiny
+     EquipL D poison hammer -shiny
+    :?ElementToEquip = ＂vigor＂
+     EquipR D vigor hammer +15
+     EquipL D vigor hammer +14
+    :?ElementToEquip = ＂aether＂
+     EquipR D aether hammer shiny
+     EquipL D aether hammer -shiny
+    :?ElementToEquip = ＂fire＂
+     EquipR D fire hammer +15
+     EquipL D fire hammer +14
+    :
+     Equip golden heavy hammer
+   :
+    ?Use21MDSwords
+     ?ElementToEquip = ＂omni＂
+      Moondial21Swords(＂D ice sword shiny＂,
+      ^＂D ice sword -shiny＂)
+     :?ElementToEquip = ＂ice＂
+      Moondial21Swords(＂D ice sword shiny＂,
+      ^＂D ice sword -shiny＂)
+     :?ElementToEquip = ＂poison＂
+      Moondial21Swords(＂D poison sword shiny＂,
+      ^＂D poison sword -shiny＂)
+     :?ElementToEquip = ＂vigor＂
+      ?hp < maxhp
+       Moondial21Swords(＂dL vigor sword shiny＂,
+       ^＂dL vigor sword -shiny＂)
+      :
+       Moondial21Swords(＂D vigor sword shiny＂,
+       ^＂D vigor sword -shiny＂)
+     :?ElementToEquip = ＂aether＂
+      Moondial21Swords(＂D aether sword shiny＂,
+      ^＂D aether sword -shiny＂)
+     :?ElementToEquip = ＂fire＂
+      Moondial21Swords(＂D fire sword shiny＂,
+      ^＂D fire sword -shiny＂)
+     :
+      //Equip skeleton arm
+      Moondial21Swords(＂D ice sword shiny＂,
+      ^＂D ice sword -shiny＂)
+    :
+     ?ElementToEquip = ＂omni＂
+      EquipR D fire sword shiny
+      EquipL D fire sword -shiny
+     :?ElementToEquip = ＂ice＂
+      EquipR D ice sword shiny
+      EquipL D ice sword -shiny
+     :?ElementToEquip = ＂poison＂
+      EquipR D poison sword shiny
+      EquipL D poison sword -shiny
+     :?ElementToEquip = ＂vigor＂
+      EquipR D vigor sword shiny
+      EquipL D vigor sword -shiny
+     :?ElementToEquip = ＂aether＂
+      EquipR D aether sword shiny
+      EquipL D aether sword -shiny
+     :?ElementToEquip = ＂fire＂
+      EquipR D fire sword shiny
+      EquipL D fire sword -shiny
+     :
+      //Equip skeleton arm
+      EquipR D fire sword shiny
+      EquipL D fire sword -shiny
+  :
+   EquipMTRangedDPS() //placeholder
+
+func EquipMTMeleeDPS()
+  EquipMTRangedDPS()
+
+func EquipDodging()
+ EquipL mind stone
+ EquipR compound shield prismatic
+
+func FindFoeWeaknessHint()
+ ?foe.count = 0
+  return ＂stone＂
+ :?FoeString = ＂dysangelos_perfected＂ &
+ ^FoeBuffs ! ＂adaptive_defense＂
+  return ＂d_p＂
+ :?FoeString = ＂poison＂ & FoeBuffs ! 
+ ^＂adaptive_defense_poison＂
+  return ＂poison＂
+ :?FoeString = ＂vigor＂ & FoeBuffs !
+ ^＂adaptive_defense_vigor＂
+  return ＂vigor＂
+ :?FoeString = ＂aether＂ & FoeBuffs !
+ ^＂adaptive_defense_aether＂
+  return ＂aether＂
+ :?FoeString = ＂fire＂ & FoeBuffs !
+ ^＂adaptive_defense_fire＂
+  return ＂fire＂
+ :?FoeString = ＂ice＂ & FoeBuffs !
+ ^＂adaptive_defense_ice＂
+  return ＂ice＂
+ :
+  return ＂stone＂
+
+func DetermineOffenseElement(FoeWeaknessHint)
+ ?FoeWeaknessHint = ＂d_p＂
+  return ＂omni＂
+ :?FoeWeaknessHint = ＂poison＂
+  return ＂ice＂
+ :?FoeWeaknessHint = ＂vigor＂
+  return ＂poison＂
+ :?FoeWeaknessHint = ＂aether＂
+  return ＂vigor＂
+ :?FoeWeaknessHint = ＂fire＂
+  return ＂aether＂
+ :?FoeWeaknessHint = ＂ice＂
+  return ＂fire＂
+ :
+  return ＂stone＂
+
+func ActivateAbility(ItemToActivate)
+ ?ItemToActivate = ＂quarterstaff＂
+  equip quarterstaff prismatic shiny *0* +21
+ :?ItemToActivate = ＂bardicheCrit＂
+  equip bardiche shiny
+ :?ItemToActivate = ＂bardicheSpeed＂
+  equip bardiche golden
+ :?ItemToActivate = ＂hammerLongAF＂
+  equip heavy hammer golden
+ :?ItemToActivate = ＂hammerStrongAF＂
+  equip heavy hammer prismatic 
+ :?ItemToActivate = ＂hammerDamage＂
+  equip heavy hammer shiny
+ :
+  >DEBUG: Couldn't figure out: @ItemToActivate@
+ ?item.CanActivate()
+  activate R
+
+func DoSummoning()
+ ?loc ! ＂rocky＂
+  equipL aether talisman 
+ :
+  equipL fire talisman
+ activate L
+ EquipR triskelion stone
+
+func ConsiderSummoning()
+ ?LoopsPerformed = 0 & loc = ＂rocky＂
+  return false
+ ?summon.count = 0 & totaltime > 1
+  return true
+ :
+  return false
+
+func ConsiderBardiche(EnchantType)
+ ?item.GetCooldown(＂bardiche＂) > 
+ ^(BardicheCooldownTime - BardicheSpecTime)
+  return true
+ :?item.GetCooldown(＂bardiche＂) > 0 |
+ ^ FoeDistance > 9
+  return false
+ :
+  ?FoeDTK > BardicheSpecDamage
+   return false
+  :
+   return true
+
+func ConsiderHeavyHammer(EnchantType)
+ ?item.GetCooldown(＂hammer＂) > 
+ ^(HammerCooldownTime - HammerSpecTime)
+  return true
+ :?item.GetCooldown(＂hammer＂) > 0
+  return false
+ :?FoeDistance >= MeleeDistance
+  return false
+ :
+  return false
+
+func ConsiderQuarterstaff()
+ ?item.GetCooldown(＂quarterstaff＂) > 0
+  return false
+ :?CutsceneLocked
+  return false
+ :?FoeDistance > RangedDistance & IsWalking
+  return true
+ :
+  return false
+
+func Moondial21Swords(sword1,sword2)
+ ?(MD21Sword1 ! sword1) | (MD21Sword2 ! sword2)
+  MD21SwordsTimer = 0
+  MD21Sword1 = sword1
+  MD21Sword2 = sword2
+ ?MD21SwordsTimer % 3 = 0
+  EquipL @MD21Sword1@
+  EquipR @MD21Sword2@
+ :?MD21SwordsTimer % 3 = 1
+  EquipL moondial
+  EquipR @MD21Sword1@
+ :?MD21SwordsTimer % 3 = 2
+  EquipL moondial
+  EquipR @MD21Sword2@
+ :
+  EquipL @sword1@
+  EquipR @sword2@
+  return false
+ MD21SwordsTimer = 1 + MD21SwordsTimer
+ return true
+
+func DetermineCutsceneLock()
+ //CLLF means cutscene locked last frame
+ CLLF = CutsceneLocked
+ CutsceneLocked = (ai.enabled = false) | 
+ ^(item.CanActivate() = false)
+ ?CutsceneExitTimer >= 1
+  CutsceneExitTimer = (CutsceneExitTimer - 1)
+ ?CutsceneLocked ! CLLF
+  CutsceneExitTimer = CutsceneExitStartTime
+
+func RestartWalkingAfterStopped()
+ ?IsWalking ! true
+  ?ConsiderQuarterstaff()
+   ActivateAbility(＂quarterstaff＂)
+  :
+   equip shovel
+ 
+func ConsiderDashing()
+ //avoid dashing back into bad things
+ ?(foe.state = 115 
+ ^& foe = ＂dysangelos_perfected＂)
+  return false
+ ?FoeDistance >= MeleeDistance & 
+ ^FoeDistance <= RangedDistance
+  ?IsWalking
+   return true
+  :
+   ?TriedDashing
+    TriedDashing = false
+    return false
+   :
+    TriedDashing = true
+    return true
+ :
+  return false
+
+func EquipDashing()
+ equipL triskelion stone
+ ?item.GetCooldown(＂bash＂) <= 0
+ ^& (foe ! ＂xyloalgia＂) //bash blacklist 
+  equipR bashing shield
+ :?item.GetCooldown(＂dash＂) <= 0
+  equipR dashing shield *0* shiny prismatic
+ :
+  OutOfCombat()
+
+func ConsiderDodging()
+ ?FoeString = ＂bolesh＂
+  ?foe.state = 133 & foe.time = 11
+   return true
+ :?FoeString = ＂bronze＂
+  ?foe.state = 32 & foe.time = 31
+   return true
+ :?FoeString = ＂dysangelos＂
+  ?FoeString = ＂phase3＂
+   ?(foe.state = 115 & foe.time = 63) |
+   ^(foe.damage = 1 & foe.time = 25)
+    return true
+  :
+   return false
+ :?FoeString = ＂bomb＂ & foe.distance <= 5
+  return true
+ :
+  return false
+
+func ConsiderDebuffs()
+//debuff_chill debuff_damage debuff_dot stun
+ ?foe.distance >= RangedDistance |
+ ^FoeBuffs = ＂buff_protection＂
+  return ＂none＂
+ :?(loc.stars < 16 & (
+ ^FoeString = ＂dysangelos＂ |
+ ^FoeString = ＂acronian_scout＂ | 
+ ^FoeString = ＂nagaraja＂))
+ ^| (loc.stars > 15 & FoeString = ＂boss＂)
+  ?FoeDebuffs ! ＂debuff_chill:6＂
+   return ＂chill＂
+  :?FoeDebuffs ! ＂debuff_damage＂
+   return ＂damage＂
+  :
+   return ＂none＂
+ :?FoeString = ＂Poena＂
+  ?foe.debuffs.GetTime(＂stun＂) < 8
+   return ＂stun＂
+  :
+   return ＂none＂
+ :
+  return ＂none＂
+
+func ApplyDebuffs(Debuff)
+ IsReapplying = true;
+ ?Debuff = ＂chill＂
+  ?FoeDistance <= MeleeDistance
+   Moondial21Swords(＂dI ice sword shiny＂,
+   ^＂dI ice sword -shiny＂)
+  :
+   EquipL dI ice wand +14
+   EquipR dI ice wand +15
+ :?Debuff = ＂dot＂
+  ?FoeDistance <= MeleeDistance
+   EquipL dF fire sword
+   ?FoeString = ＂immune_to_debuff_damage＂
+    EquipR cultist mask
+   :
+    EquipR dP poison sword
+  :
+   EquipR dF fire wand
+   ?FoeString = ＂immune_to_debuff_damage＂
+    EquipL cultist mask
+   :
+    EquipL dP poison wand
+ :?Debuff = ＂damage＂
+  ?foe.distance <= MeleeDistance
+   EquipR cultist mask
+   EquipL dP poison sword
+  :
+   EquipR cultist mask
+   EquipL dP poison wand
+ :?Debuff = ＂stun＂
+  EquipL grappling 
+  EquipR moondial
+
+
+//the below two permapot functions are bad.
+//and they should feel bad.
+//it only works at rocky and exploits an ai bug
+
+var DPPermapot = false
+
+func ConsiderPermapot()
+ ?loc.stars < 11 //beginning of yellow
+ ^| LoopsPerformed > 0
+  DPPermapot = false
+  return false
+ :?foe = ＂dysangelos_perfected＂
+  DPPermapot = true
+  return true
+
+func EquipPermapot()
+ ?time < 5000
+  EquipL quest stone
+ :
+  ?foe.buffs.string ! ＂adaptive_defense_vigor＂
+   ?foe.armor > 0
+    ?hp < 30
+     EquipL dL vigor hammer
+    :
+     EquipL D vigor hammer
+   :
+    ?hp < 30
+     EquipL dL vigor sword
+    :
+     EquipL D vigor sword
+  :
+   ?foe.armor > 0
+    EquipL D Aether hammer
+   :
+    EquipL D Aether sword
+ EquipR cultist mask
+
+func InitializePotions()
+ PotionChoice = GetPotionChoiceByLocation()
+ ?UsePotions & item.potion = ＂empty＂
+  ?loc.begin | loc.loop
+   BrewPotionByName(PotionChoice)
+
+func ConsumePotion()
+ ?item.potion ! empty
+  activate potion
+
+func GetElementOfLocation()
+ ?loc = ＂plateau＂ | loc = ＂deadwood＂
+  return ＂stone＂
+ :?loc = ＂caves＂ | loc = ＂temple＂
+  return ＂poison＂
+ :?loc = ＂forest＂
+  return ＂vigor＂
+ :?loc = ＂halls＂
+  return ＂aether＂
+ :?loc = ＂mine＂
+  return ＂fire＂
+ :?loc = ＂ridge＂
+  return ＂ice＂
+ :
+  return ＂stone＂
+
+func GetPotionChoiceByLocation()
+ ?loc = ＂rocky＂
+  return ＂lucky＂
+ :?loc = ＂deadwood＂
+  return ＂berserk＂
+ :?loc = ＂caves＂
+  return ＂lucky＂
+ :?loc = ＂mushroom＂
+  return ＂lucky＂
+ :?loc = ＂haunted＂
+  return ＂lucky＂
+ :?loc = ＂boiling＂
+  return ＂strength＂
+ :?loc = ＂icy＂
+  return ＂lucky＂
+ :?loc = ＂temple＂
+  return ＂lucky＂
+ :
+  return ＂none＂
+
+func BrewPotionByName(PotionName)
+ ?PotionName = ＂berserk＂
+  brew wood + bronze
+ :?PotionName = ＂cleansing＂
+  brew wood + tar
+ :?PotionName = ＂defensive＂
+  brew stone + tar
+ :?PotionName = ＂experience＂
+  brew wood
+ :?PotionName = ＂healing＂
+  brew tar
+ :?PotionName = ＂invisibility＂
+  brew stone + wood
+ :?PotionName = ＂lightning＂
+  brew bronze
+ :?PotionName = ＂lucky＂
+  brew stone + bronze
+ :?PotionName = ＂strength＂
+  brew stone
+ :?PotionName = ＂vampiric＂
+  brew tar + bronze
+
+func ConsiderUsingPotion(PotionName)
+ ?PotionName = ＂berserk＂
+  ?foe = ＂bolesh＂ & foe.distance < MeleeDistance
+   return true
+  :
+   return false
+ :?PotionName = ＂cleansing＂
+  return false
+ :?PotionName = ＂defensive＂
+  return false
+ :?PotionName = ＂experience＂
+  ?item.right = ＂dashing＂
+   return true
+  :
+   return false
+ :?PotionName = ＂healing＂
+  return false
+ :?PotionName = ＂invisibility＂
+  return false
+ :?PotionName = ＂lightning＂
+  return false
+ :?PotionName = ＂lucky＂
+  ?loc = ＂rocky＂ & buffs.string = ＂lucky_crit＂
+  ^& LoopsPerformed = 1
+   return true
+  :?(foe.distance < MeleeDistance 
+  ^| ConsiderPermapot())
+  ^& (FoeString = ＂dysangelos_perfected＂ | 
+  ^FoeString = ＂Bolesh＂ | 
+  ^FoeString = ＂Enoki＂ | 
+  ^FoeString = ＂Pallas＂ | 
+  ^(FoeString = ＂Hrímnir＂ & foe.armor = 0) |
+  ^FoeString = ＂Nagaraja＂)
+   return true
+  :
+   return false
+ :?PotionName = ＂strength＂
+  ?FoeString = ＂bronze＂
+   return true
+  :
+   return false
+ :?PotionName = ＂vampiric＂
+  ?item.right = ＂dashing＂
+   return true
+  :
+   return false
+ :
+  return false
+
+func ConsiderSpecialAttacks()
+ ?FoeString = ＂xyloalgia＂ | FoeString = ＂pallas＂
+ ^ | FoeString = ＂bronze＂ | FoeString = ＂puff＂
+ ^ | FoeString = ＂enoki＂ | FoeString = ＂hrìmnir＂
+ ^ | FoeString = ＂acronian_scout＂ | 
+ ^FoeString = ＂nagaraja＂
+/*
+ ^FoeString = ＂dysangelos_bearer＂ |
+ ^FoeString = ＂dysangelos_perfected＂
+*/
+  ?ConsiderBardiche(＂Crit＂)
+   return ＂bardicheCrit＂
+  :
+   return ＂none＂
+ :?FoeString = ＂angry＂ | FoeString = ＂bronze＂ 
+  ^ | (FoeString = ＂dysangelos＂
+  ^ & FoeString = ＂phase3＂)
+  ?ConsiderHeavyHammer(＂LongAF＂)
+   return ＂hammerLongAF＂
+  :
+   return ＂none＂
+ :
+  return ＂none＂
+
+func RunAAC(IL,IR)
+ ?item.left.state = 3
+  equipL *0 wand
+  equipL @item.left@
+ ?item.right.state = 3
+  ?time % 2
+    equipR throw
+  :
+    equipR *0 shield
+  equip @item.right@
+
+func InitializeLoops()
+ ?loc.begin | loc.loop
+  PotionChoice = GetPotionChoiceByLocation()
+  BrewPotionByName(PotionChoice)
+  ?loc.begin
+   LoopsPerformed = 0
+  ?loc.loop
+   LoopsPerformed = LoopsPerformed + 1
+
+RefetchLagVariables()
+?AutomateCombat
+ Main()
+?DebugPrintouts
+ RenderDebugPrintouts()
+?StatisticsPrintouts
+ RenderStatisticsPrintouts()
